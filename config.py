@@ -7,28 +7,23 @@ import os
 from pathlib import Path
 
 # --- Database Configuration ---
-# Best Practice: Try to get URI from environment first for security
-# If not found, fallback to the hardcoded string (for local dev)
+# Checks environment variable first (for Cloud), fallbacks to hardcoded (for Local)
 MONGO_URI = os.environ.get(
     "MONGO_URI", 
     "mongodb+srv://ishaanroopesh0102:6eShFuC0pNnFFNGm@cluster0.biujjg4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 )
-
 CHROMA_PATH = "vector_db/chroma"
 DATABASE_NAME = "hospital_db"
 PATIENTS_COLLECTION = "test_patients"
 
-# --- AI Model Configuration (Local) ---
+# --- AI Model Configuration ---
 BIO_CLINICALBERT_MODEL = "emilyalsentzer/Bio_ClinicalBERT"
 OLLAMA_MODEL = "llama3"
 OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_CHAT_ENDPOINT = f"{OLLAMA_BASE_URL}/api/chat"
 
-# --- Cloud Inference Configuration (Groq) ---
-# These settings are used when the app detects a GROQ_API_KEY
+# --- Cloud Inference (Groq) ---
 GROQ_MODEL_ID = "llama3-8b-8192"
-GROQ_MAX_TOKENS = 1500
-GROQ_TEMPERATURE = 0.4
 
 # --- RAG Configuration ---
 NUM_SIMILAR_CASES = 3
