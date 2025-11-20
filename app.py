@@ -256,7 +256,7 @@ Rules:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    model="llama-3.1-70b-versatile",
+                    model="llama-3.1-8b-instant",
                     temperature=0.4,
                     max_tokens=1500,
                 )
@@ -484,7 +484,7 @@ Maintain a professional, objective medical tone. Do not add conversational phras
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    model="llama-3.1-70b-versatile",
+                    model="llama-3.1-8b-instant",
                     temperature=0.4,
                     max_tokens=1500,
                 )
@@ -614,7 +614,7 @@ class AutoGenMedicalAgent:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"{message}{context}"}
                     ],
-                    model="llama-3.1-70b-versatile",
+                    model="llama-3.1-8b-instant",
                     temperature=0.6,
                     max_tokens=250,
                 )
