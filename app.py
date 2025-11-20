@@ -10,11 +10,13 @@ from typing import Dict, List, Optional
 import time
 from datetime import datetime
 import os
+from io import BytesIO
+
+# --- Consolidated Imports (Fixed NameError) ---
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from io import BytesIO
-from groq import Groq  # Added for Cloud Deployment
-
+from requests import Session  # Explicitly import Session for type hinting
+from groq import Groq 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
@@ -23,7 +25,7 @@ from reportlab.lib.units import inch
 from pypdf import PdfReader, PdfWriter
 from docx import Document
 
-# --- Helper Functions (Safe to be at global scope) ---
+# --- Helper Functions ---
 
 def extract_template_outline(template_bytes: bytes) -> List[str]:
     """Module-level extractor for PDF template headings to avoid class reload ordering issues."""
@@ -64,9 +66,17 @@ try:
     AUTOGEN_AVAILABLE = True
 except ImportError:
     AUTOGEN_AVAILABLE = False
-    # Note: st.warning is moved inside main()
 
 # Performance: HTTP session and model/db connectors
+def _http_session() -> Session:
+    session = requests.Session()
+    retries = Retry(total=2, backoff_factor=0.2, status_forcelist=[429, 502, 503, 504])
+    adapter = HTTPAdapter(max_retries=retries, pool_connections=10, pool_maxsize=10)
+    session.headers.update({"Connection": "keep-alive"})
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
 def _get_css(minimal: bool) -> str:
     if minimal:
         return """
@@ -133,15 +143,6 @@ def _get_css(minimal: bool) -> str:
     .empty-state p { margin: 0; color: var(--muted); font-size: .95rem; }
 </style>
 """
-
-def _http_session() -> Session:
-    session = requests.Session()
-    retries = Retry(total=2, backoff_factor=0.2, status_forcelist=[429, 502, 503, 504])
-    adapter = HTTPAdapter(max_retries=retries, pool_connections=10, pool_maxsize=10)
-    session.headers.update({"Connection": "keep-alive"})
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    return session
 
 def _load_tokenizer_model():
     tokenizer = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
@@ -501,12 +502,7 @@ Maintain a professional, objective medical tone. Do not add conversational phras
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}
                         ],
-                        "stream": True,
-                        "options": {
-                            "temperature": 0.4,
-                            "top_p": 0.9,
-                            "max_tokens": 700
-                        }
+                        "stream": True
                     },
                     timeout=60
                 )
