@@ -16,16 +16,7 @@ scikit-learn>=1.3.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
 plotly>=5.15.0
-
-PDF generation and template overlay
-
 reportlab>=4.0.0
 pypdf>=4.2.0
-
-Editable document export
-
 python-docx>=0.8.11
-
-Cloud deployment
-
 groq>=0.5.0
