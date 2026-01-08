@@ -7,23 +7,27 @@ import os
 from pathlib import Path
 
 # --- Database Configuration ---
-# Checks environment variable first (for Cloud), fallbacks to hardcoded (for Local)
+# Render/Cloud: Uses environment variable "MONGO_URI"
+# Local: Fallback to your hardcoded string
 MONGO_URI = os.environ.get(
     "MONGO_URI", 
     "mongodb+srv://ishaanroopesh0102:6eShFuC0pNnFFNGm@cluster0.biujjg4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 )
+
 CHROMA_PATH = "vector_db/chroma"
 DATABASE_NAME = "hospital_db"
 PATIENTS_COLLECTION = "test_patients"
 
-# --- AI Model Configuration ---
+# --- Cloud Inference Configuration (Groq) ---
+GROQ_MODEL_ID = "llama-3.1-8b-instant"
+GROQ_MAX_TOKENS = 1500
+GROQ_TEMPERATURE = 0.3
+
+# --- Local AI Configuration (Ollama Fallback) ---
 BIO_CLINICALBERT_MODEL = "emilyalsentzer/Bio_ClinicalBERT"
 OLLAMA_MODEL = "llama3"
 OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_CHAT_ENDPOINT = f"{OLLAMA_BASE_URL}/api/chat"
-
-# --- Cloud Inference (Groq) ---
-GROQ_MODEL_ID = "llama3-8b-8192"
 
 # --- RAG Configuration ---
 NUM_SIMILAR_CASES = 3
@@ -85,18 +89,6 @@ REQUIRED DISCHARGE SUMMARY STRUCTURE:
 Name, Unit No, Date Of Birth, Sex, Admission/Discharge Dates, Attending, Chief Complaint, Procedure, History, Physical Exam (on Admission), Pertinent Results, Brief Hospital Course, Medications on Admission, Discharge Medications, Discharge Instructions, Discharge Disposition, Discharge Diagnosis, Discharge Condition, Follow-up.
 
 Maintain a professional, objective medical tone. Do not add conversational phrases."""
-
-AUTOGEN_SYSTEM_MESSAGE = """You are a specialized medical AI assistant that helps doctors generate discharge summaries. 
-You have access to a RAG system that can retrieve similar patient cases and generate comprehensive discharge summaries.
-
-Your capabilities:
-1. Retrieve patient information from the hospital database
-2. Search for similar cases using medical embeddings
-3. Generate structured discharge summaries
-4. Answer questions about patient care and medical procedures
-
-Always maintain professional medical terminology and ensure accuracy in all medical information.
-When generating discharge summaries, follow the standard medical format and include all required sections."""
 
 # --- Patient Data Fields ---
 PATIENT_FIELDS = [

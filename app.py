@@ -16,8 +16,12 @@ from io import BytesIO
 import hashlib
 from functools import lru_cache
 import httpx
-from groq import Groq  # Added for Cloud Deployment
+from groq import Groq  # Import Groq client
 
+# --- Consolidated Imports ---
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from requests import Session 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
@@ -26,7 +30,9 @@ from reportlab.lib.units import inch
 from pypdf import PdfReader, PdfWriter
 from docx import Document
 
-# --- Helper Functions (Safe to be at global scope) ---
+import config  # Import centralized config
+
+# --- Helper Functions ---
 
 def extract_template_outline(template_bytes: bytes) -> List[str]:
     """Module-level extractor for PDF template headings to avoid class reload ordering issues."""
@@ -101,11 +107,41 @@ def _get_css(minimal: bool) -> str:
     .stTextArea textarea, .stTextInput input { border-radius:10px !important; border:1px solid var(--border) !import; }
 </style>
 """
-    return ""
-
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from requests import Session
+    return """
+<style>
+    :root {
+        --bg:#ffffff; 
+        --fg:#0f172a; 
+        --muted:#64748b; 
+        --border:#e2e8f0; 
+        --primary:#0ea5e9; 
+        --primary-dark:#0284c7; 
+        --success:#16a34a;
+        --accent-blue:#0ea5e9;
+        --text-dark:#0f172a;
+        --text-light:#64748b;
+        --success-green:#16a34a;
+        --danger-red:#dc2626;
+        --card:#ffffff;
+        --card-muted:#f8fafc;
+    }
+    .main-header { padding: 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--fg); text-align:center; margin-bottom: 1rem; }
+    .main-header h1 { margin:0; font-size: 1.4rem; }
+    .patient-card, .metric-card, .chat-container, .summary-card { border: 1px solid var(--border); border-radius: 12px; padding: 1rem; background: var(--card); color: var(--fg); }
+    .metric-card h4 { margin: 0 0 .25rem 0; color: var(--success); font-size: 1rem; }
+    .metric-card p { margin: .25rem 0; color: var(--fg); }
+    .chat-message { border:1px solid var(--border); border-left:4px solid var(--primary); border-radius:10px; padding:.75rem; background:var(--card-muted); color: var(--text-dark); }
+    .doctor-message { background:var(--card-muted); }
+    .ai-message { background:var(--card-muted); border-left-color:#9333ea; }
+    .stButton > button { background: var(--primary); color:#fff; border:0; border-radius:10px; padding:.6rem 1rem; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+    .stButton > button:hover { background: var(--primary-dark); }
+    .stTextArea textarea, .stTextInput input { border-radius:10px !important; border:1px solid var(--border) !important; }
+    .empty-state { width:100%; text-align:center; border: 1px dashed var(--border); border-radius: 12px; padding: 2rem; background:var(--card); color: var(--fg); }
+    .empty-state .icon { font-size: 2rem; margin-bottom: .5rem; }
+    .empty-state h3 { margin: 0 0 .25rem 0; color: var(--fg); font-size: 1.1rem; font-weight: 600; }
+    .empty-state p { margin: 0; color: var(--muted); font-size: .95rem; }
+</style>
+"""
 
 def _http_session() -> Session:
     session = requests.Session()
@@ -227,489 +263,29 @@ def _connect_chroma(path: str):
     collection = client.get_or_create_collection("patient_embeddings")
     return client, collection
 
-# Page configuration
-st.set_page_config(
-    page_title="Medical Discharge Summary Assistant",
-    page_icon="🏥",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Poppins:wght@400;500;600;700&display=swap');
-    
-    /* Modern Color Palette */
-    :root {
-        --bg-primary: #0a0e27;
-        --bg-secondary: #141b2d;
-        --bg-tertiary: #1a2332;
-        --bg-card: #1e293b;
-        --bg-card-hover: #243447;
-        --bg-input: #0f172a;
-        --text-primary: #f1f5f9;
-        --text-secondary: #cbd5e1;
-        --text-muted: #94a3b8;
-        --border-color: #334155;
-        --border-light: #475569;
-        --primary: #6366f1;
-        --primary-hover: #4f46e5;
-        --primary-light: #818cf8;
-        --accent-purple: #a855f7;
-        --accent-cyan: #06b6d4;
-        --success: #10b981;
-        --warning: #f59e0b;
-        --danger: #ef4444;
-        --gradient-primary: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
-        --gradient-secondary: linear-gradient(135deg, #0ea5e9 0%, #3b82f6 100%);
-        --gradient-success: linear-gradient(135deg, #10b981 0%, #059669 100%);
-        --gradient-card: linear-gradient(135deg, #1e293b 0%, #1a2332 100%);
-        --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.3);
-        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-        --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.5);
-        --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.3);
-    }
-    
-    /* Global Styles */
-    * {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    }
-    
-    .stApp {
-        background: var(--bg-primary);
-        color: var(--text-primary);
-    }
-    
-    .main .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-    
-    /* Header Styles */
-    .main-header {
-        padding: 3rem 2.5rem;
-        border: none;
-        border-radius: 24px;
-        background: var(--gradient-primary);
-        color: white;
-        text-align: center;
-        margin-bottom: 2rem;
-        box-shadow: var(--shadow-lg), var(--shadow-glow);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .main-header::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: radial-gradient(circle at 30% 50%, rgba(255, 255, 255, 0.1) 0%, transparent 50%);
-        pointer-events: none;
-    }
-    
-    .main-header h1 {
-        margin: 0;
-        font-size: 2.5rem;
-        font-weight: 800;
-        letter-spacing: -0.03em;
-        position: relative;
-        z-index: 1;
-        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-    }
-    
-    .main-header p {
-        margin: 0.75rem 0 0 0;
-        opacity: 0.95;
-        font-size: 1.1rem;
-        font-weight: 400;
-        position: relative;
-        z-index: 1;
-    }
-    
-    /* Card Styles */
-    .patient-card, .metric-card, .chat-container, .summary-card {
-        border: 1px solid var(--border-color);
-        border-radius: 20px;
-        padding: 2rem;
-        background: var(--gradient-card);
-        color: var(--text-primary);
-        box-shadow: var(--shadow-md);
-        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-        backdrop-filter: blur(10px);
-    }
-    
-    .patient-card:hover, .metric-card:hover, .summary-card:hover {
-        box-shadow: var(--shadow-lg), 0 0 30px rgba(99, 102, 241, 0.2);
-        transform: translateY(-4px);
-        border-color: var(--primary);
-    }
-    
-    .metric-card {
-        text-align: center;
-        background: var(--gradient-card);
-        border: 1px solid var(--border-color);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .metric-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 3px;
-        background: var(--gradient-primary);
-    }
-    
-    .metric-card h4 {
-        margin: 0 0 0.75rem 0;
-        color: var(--primary-light);
-        font-size: 1.25rem;
-        font-weight: 700;
-        letter-spacing: -0.02em;
-    }
-    
-    .metric-card p {
-        margin: 0.5rem 0;
-        color: var(--text-secondary);
-        font-weight: 500;
-        font-size: 0.95rem;
-    }
-    
-    /* Chat Message Styles */
-    .chat-message {
-        border: 1px solid var(--border-color);
-        border-left: 4px solid var(--primary);
-        border-radius: 16px;
-        padding: 1.25rem;
-        background: var(--bg-card);
-        color: var(--text-primary);
-        margin: 1rem 0;
-        box-shadow: var(--shadow-sm);
-        animation: slideInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-        transition: all 0.3s ease;
-    }
-    
-    .chat-message:hover {
-        box-shadow: var(--shadow-md);
-        transform: translateX(4px);
-    }
-    
-    @keyframes slideInUp {
-        from {
-            opacity: 0;
-            transform: translateY(20px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-    
-    .doctor-message {
-        background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%);
-        border-left-color: var(--primary);
-        border: 1px solid rgba(99, 102, 241, 0.3);
-    }
-    
-    .ai-message {
-        background: linear-gradient(135deg, rgba(168, 85, 247, 0.15) 0%, rgba(236, 72, 153, 0.1) 100%);
-        border-left-color: var(--accent-purple);
-        border: 1px solid rgba(168, 85, 247, 0.3);
-    }
-    
-    /* Button Styles */
-    .stButton > button {
-        background: var(--gradient-primary) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 12px !important;
-        padding: 0.875rem 1.75rem !important;
-        font-weight: 600 !important;
-        font-size: 0.95rem !important;
-        box-shadow: var(--shadow-md) !important;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-        text-transform: none !important;
-        letter-spacing: 0.01em !important;
-    }
-    
-    .stButton > button:hover {
-        background: var(--primary-hover) !important;
-        box-shadow: var(--shadow-lg), var(--shadow-glow) !important;
-        transform: translateY(-2px) !important;
-    }
-    
-    .stButton > button:active {
-        transform: translateY(0) !important;
-    }
-    
-    /* Input Styles */
-    .stTextArea textarea, .stTextInput input {
-        border-radius: 12px !important;
-        border: 2px solid var(--border-color) !important;
-        padding: 0.875rem 1rem !important;
-        background: var(--bg-input) !important;
-        color: var(--text-primary) !important;
-        transition: all 0.3s ease !important;
-        font-size: 0.95rem !important;
-    }
-    
-    .stTextArea textarea:focus, .stTextInput input:focus {
-        border-color: var(--primary) !important;
-        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15) !important;
-        outline: none !important;
-    }
-    
-    .stTextArea textarea::placeholder, .stTextInput input::placeholder {
-        color: var(--text-muted) !important;
-    }
-    
-    /* Empty State */
-    .empty-state {
-        width: 100%;
-        text-align: center;
-        border: 2px dashed var(--border-color);
-        border-radius: 20px;
-        padding: 4rem 2rem;
-        background: var(--bg-card);
-        color: var(--text-primary);
-    }
-    
-    .empty-state .icon {
-        font-size: 4rem;
-        margin-bottom: 1.5rem;
-        opacity: 0.7;
-        filter: drop-shadow(0 4px 8px rgba(99, 102, 241, 0.3));
-    }
-    
-    .empty-state h3 {
-        margin: 0 0 0.75rem 0;
-        color: var(--text-primary);
-        font-size: 1.5rem;
-        font-weight: 700;
-    }
-    
-    .empty-state p {
-        margin: 0;
-        color: var(--text-muted);
-        font-size: 1rem;
-    }
-    
-    /* Chat Container */
-    .chat-container {
-        max-height: 550px;
-        overflow-y: auto;
-        background: var(--bg-secondary);
-        padding: 1.5rem;
-        border-radius: 20px;
-        border: 1px solid var(--border-color);
-    }
-    
-    .chat-container::-webkit-scrollbar {
-        width: 10px;
-    }
-    
-    .chat-container::-webkit-scrollbar-track {
-        background: var(--bg-secondary);
-        border-radius: 5px;
-    }
-    
-    .chat-container::-webkit-scrollbar-thumb {
-        background: var(--border-color);
-        border-radius: 5px;
-        transition: background 0.3s ease;
-    }
-    
-    .chat-container::-webkit-scrollbar-thumb:hover {
-        background: var(--primary);
-    }
-    
-    /* Summary Card */
-    .summary-card {
-        background: var(--gradient-card);
-        border: 1px solid var(--border-color);
-    }
-    
-    /* Spinner */
-    .stSpinner > div {
-        border-color: var(--primary) transparent transparent transparent;
-    }
-    
-    /* Loading Animation */
-    @keyframes pulse {
-        0%, 100% {
-            opacity: 1;
-        }
-        50% {
-            opacity: 0.6;
-        }
-    }
-    
-    .loading {
-        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-    }
-    
-    /* Card Header */
-    .card-header {
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-        margin-bottom: 1.5rem;
-        padding-bottom: 1rem;
-        border-bottom: 2px solid var(--border-color);
-    }
-    
-    .card-header-icon {
-        width: 48px;
-        height: 48px;
-        border-radius: 12px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1.5rem;
-        background: var(--gradient-primary);
-        color: white;
-        box-shadow: var(--shadow-md);
-    }
-    
-    /* Sidebar Styles */
-    [data-testid="stSidebar"] {
-        background: var(--bg-secondary);
-        border-right: 1px solid var(--border-color);
-    }
-    
-    [data-testid="stSidebar"] .css-1d391kg {
-        background: var(--bg-secondary);
-    }
-    
-    /* Progress Bar */
-    .stProgress > div > div > div {
-        background: var(--gradient-primary);
-    }
-    
-    /* Success/Error Messages */
-    .stSuccess {
-        background: rgba(16, 185, 129, 0.1);
-        border-left: 4px solid var(--success);
-        border-radius: 8px;
-        border: 1px solid rgba(16, 185, 129, 0.3);
-    }
-    
-    .stError {
-        background: rgba(239, 68, 68, 0.1);
-        border-left: 4px solid var(--danger);
-        border-radius: 8px;
-        border: 1px solid rgba(239, 68, 68, 0.3);
-    }
-    
-    /* Text Area for Summary */
-    .stTextArea textarea {
-        background: var(--bg-input) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* Selectbox and other inputs */
-    .stSelectbox > div > div {
-        background: var(--bg-input);
-        border-color: var(--border-color);
-    }
-    
-    /* Markdown text */
-    .stMarkdown {
-        color: var(--text-primary);
-    }
-    
-    /* Info boxes */
-    .stInfo {
-        background: rgba(6, 182, 212, 0.1);
-        border-left: 4px solid var(--accent-cyan);
-        border-radius: 8px;
-        border: 1px solid rgba(6, 182, 212, 0.3);
-    }
-    
-    /* Headers */
-    h1, h2, h3, h4, h5, h6 {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Sidebar text */
-    [data-testid="stSidebar"] p, 
-    [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] .stMarkdown {
-        color: var(--text-primary) !important;
-    }
-    
-    /* Main content text */
-    .main .stMarkdown p,
-    .main .stMarkdown li {
-        color: var(--text-secondary) !important;
-    }
-    
-    /* Expander */
-    .streamlit-expanderHeader {
-        background: var(--bg-card) !important;
-        color: var(--text-primary) !important;
-        border: 1px solid var(--border-color) !important;
-        border-radius: 8px !important;
-    }
-    
-    .streamlit-expanderContent {
-        background: var(--bg-secondary) !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* File uploader */
-    .stFileUploader > div > div {
-        background: var(--bg-input) !important;
-        border-color: var(--border-color) !important;
-    }
-    
-    /* Form */
-    .stForm {
-        border: 1px solid var(--border-color) !important;
-        border-radius: 12px !important;
-        padding: 1rem !important;
-        background: var(--bg-card) !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Initialize session state
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-if 'current_patient' not in st.session_state:
-    st.session_state.current_patient = None
-if 'discharge_summary' not in st.session_state:
-    st.session_state.discharge_summary = None
-if 'autogen_agent' not in st.session_state:
-    st.session_state.autogen_agent = None
+# --- Business Logic Class ---
 
 class MedicalRAGSystem:
     def __init__(self):
-        self.mongo_uri = "mongodb+srv://ishaanroopesh0102:6eShFuC0pNnFFNGm@cluster0.biujjg4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-        self.chroma_path = "vector_db/chroma"
-        self.ollama_model = "llama3"
+        self.mongo_uri = config.MONGO_URI
+        self.chroma_path = config.CHROMA_PATH
+        self.ollama_model = config.OLLAMA_MODEL
         self.num_results = 3
         self.http = _http_session()
         self.embedding_cache = _embedding_cache
         
-        # --- CLOUD DEPLOYMENT LOGIC ---
-        # Try to get Groq API key from Streamlit Secrets
-        try:
-            if "GROQ_API_KEY" in st.secrets:
-                self.groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-                self.use_cloud_api = True
-                print("✅ Using Groq Cloud API for Inference")
-            else:
-                print("⚠️ GROQ_API_KEY not found in secrets. Using Local Ollama for Inference.")
-                self.use_cloud_api = False
-        except Exception:
+        # --- CLOUD: GROQ SETUP ---
+        # 1. Check for API key in Environment Variables (Render)
+        # 2. Check for API key in Streamlit Secrets (Streamlit Cloud)
+        api_key = os.environ.get("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
+        
+        if api_key:
+            self.groq_client = Groq(api_key=api_key)
+            self.use_cloud_api = True
+            print("✅ Using Groq Cloud API")
+        else:
             self.use_cloud_api = False
-            print("⚠️ Using Local Ollama for Inference (Secrets not found)")
+            print("⚠️ GROQ_API_KEY not found. Using Local Ollama.")
         
         # Initialize models
         self._load_models()
@@ -773,9 +349,9 @@ Rules:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    model="llama-3.1-8b-instant",
-                    temperature=0.3,
-                    max_tokens=1500,
+                    model=config.GROQ_MODEL_ID,
+                    temperature=config.GROQ_TEMPERATURE,
+                    max_tokens=config.GROQ_MAX_TOKENS,
                 )
                 return chat_completion.choices[0].message.content
             except Exception as e:
@@ -784,7 +360,7 @@ Rules:
             # Local Ollama Fallback
             try:
                 response = self.http.post(
-                    "http://localhost:11434/api/chat",
+                    config.OLLAMA_CHAT_ENDPOINT,
                     json={
                         "model": self.ollama_model,
                         "messages": [
@@ -793,13 +369,13 @@ Rules:
                         ],
                         "stream": True,
                         "options": {
-                            "temperature": 0.3,
+                            "temperature": 0.3,  # Lower temperature for faster responses
                             "top_p": 0.85,
-                            "max_tokens": 500,
+                            "max_tokens": 500,  # Reduced for faster generation
                             "num_predict": 500
                         }
                     },
-                    timeout=30
+                    timeout=30  # Add timeout
                 )
                 if response.ok:
                     full_response = ""
@@ -910,8 +486,8 @@ Rules:
         try:
             # MongoDB connection
             self.mongo_client = _connect_mongo(self.mongo_uri)
-            self.db = self.mongo_client["hospital_db"]
-            self.patients_collection = self.db["test_patients"]
+            self.db = self.mongo_client[config.DATABASE_NAME]
+            self.patients_collection = self.db[config.PATIENTS_COLLECTION]
             
             # ChromaDB connection
             self.chroma_client, self.chroma_collection = _connect_chroma(self.chroma_path)
@@ -922,10 +498,12 @@ Rules:
     
     def embed_text(self, text: str) -> List[float]:
         """Generate embedding for text using Bio ClinicalBERT with caching"""
+        # Check cache first
         text_hash = _get_text_hash(text)
         if text_hash in self.embedding_cache:
             return self.embedding_cache[text_hash]
         
+        # Generate embedding
         with torch.no_grad():
             inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=256)
             if torch.cuda.is_available():
@@ -937,19 +515,13 @@ Rules:
                 emb = emb.to("cpu")
             embedding = emb.tolist()
         
+        # Cache the embedding
         self.embedding_cache[text_hash] = embedding
         return embedding
     
     def format_patient_fields(self, record: Dict) -> str:
         """Format patient record fields for embedding"""
-        fields = [
-            "name", "unit no", "admission date", "date of birth", "sex", "service",
-            "allergies", "attending", "chief complaint", "major surgical or invasive procedure",
-            "history of present illness", "past medical history", "social history",
-            "family history", "physical exam", "pertinent results", "medications on admission",
-            "brief hospital course", "discharge medications", "discharge diagnosis",
-            "discharge condition", "discharge instructions", "follow-up", "discharge disposition"
-        ]
+        fields = config.PATIENT_FIELDS
         parts = [f"{field.title()}: {record.get(field, '')}" for field in fields if record.get(field)]
         return " ".join(parts)
     
@@ -1008,9 +580,9 @@ Extract Name, Unit No, Date of Birth, and Sex exactly as provided."""
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    model="llama-3.1-8b-instant",
-                    temperature=0.3,
-                    max_tokens=500,
+                    model=config.GROQ_MODEL_ID,
+                    temperature=config.GROQ_TEMPERATURE,
+                    max_tokens=config.GROQ_MAX_TOKENS,
                 )
                 return chat_completion.choices[0].message.content
             except Exception as e:
@@ -1019,7 +591,7 @@ Extract Name, Unit No, Date of Birth, and Sex exactly as provided."""
             # Local Ollama Fallback
             try:
                 response = self.http.post(
-                    "http://localhost:11434/api/chat",
+                    config.OLLAMA_CHAT_ENDPOINT,
                     json={
                         "model": self.ollama_model,
                         "messages": [
@@ -1028,13 +600,13 @@ Extract Name, Unit No, Date of Birth, and Sex exactly as provided."""
                         ],
                         "stream": True,
                         "options": {
-                            "temperature": 0.3,
+                            "temperature": 0.3,  # Lower temperature for faster responses
                             "top_p": 0.85,
-                            "max_tokens": 500,
+                            "max_tokens": 500,  # Reduced for faster generation
                             "num_predict": 500
                         }
                     },
-                    timeout=30
+                    timeout=30  # Add timeout
                 )
 
                 if response.ok:
@@ -1058,6 +630,7 @@ Extract Name, Unit No, Date of Birth, and Sex exactly as provided."""
             except Exception as e:
                 return f"❌ Error connecting to Ollama: {str(e)}"
 
+    # --- START: NEW FEEDBACK LOOP METHOD ---
     def add_summary_to_vector_db(self, patient_info: Dict, summary_text: str):
         """
         Embeds the finalized discharge summary and adds it to the ChromaDB collection.
@@ -1076,24 +649,27 @@ Extract Name, Unit No, Date of Birth, and Sex exactly as provided."""
             summary_embedding = self.embed_text(summary_text)
             
             # 2. Prepare a unique ID
+            # Using unit_no and timestamp allows for multiple summary versions
             doc_id = f"summary_{unit_no}_{int(time.time())}"
             
             # 3. Prepare metadata
             metadata = {
                 "unit_no": str(unit_no),
                 "name": patient_name,
-                "summary": summary_text[:500],
-                "source_type": "feedback_summary"
+                "summary": summary_text[:500],  # Store a preview in metadata
+                "source_type": "feedback_summary" # Tag this as a human-reviewed entry
             }
             
             # 4. Add to ChromaDB
             self.chroma_collection.add(
                 embeddings=[summary_embedding],
-                documents=[summary_text],
+                documents=[summary_text],  # Store the full summary as the document
                 metadatas=[metadata],
                 ids=[doc_id]
             )
             
+            # 5. Show notification (as requested)
+            # st.toast is available in newer Streamlit; fall back to success if missing
             try:
                 st.toast(f"Database updated: Summary for {unit_no} added.", icon="✅")
             except Exception:
@@ -1102,8 +678,9 @@ Extract Name, Unit No, Date of Birth, and Sex exactly as provided."""
         
         except Exception as e:
             st.error(f"❌ Error adding feedback summary to vector DB: {str(e)}")
-            st.exception(e)
+            st.exception(e) # Print full error
             return False
+    # --- END: NEW FEEDBACK LOOP METHOD ---
     
 class AutoGenMedicalAgent:
     def __init__(self, rag_system: MedicalRAGSystem, api_client: FastAPIClient = None):
@@ -1115,12 +692,14 @@ class AutoGenMedicalAgent:
     
     def _initialize_agent(self):
         """Initialize AutoGen medical assistant agent"""
+        # Skip AutoGen initialization to avoid API errors
+        # Use FastAPI backend instead
         pass
     
     def chat_with_doctor(self, message: str, patient_data: Dict = None) -> str:
         """Handle conversation with doctor - uses FastAPI if available"""
         try:
-            # Use FastAPI if available
+            # Use FastAPI if available, otherwise fallback
             if self.api_client and self.api_client.health_check():
                 return self.api_client.chat(message, patient_data)
             else:
@@ -1134,11 +713,13 @@ class AutoGenMedicalAgent:
             # Check if user is asking for discharge summary generation
             if "discharge summary" in message.lower() or "generate summary" in message.lower():
                 if patient_data:
+                    # Use the existing discharge summary generation method
                     patient_text = self.rag_system.format_patient_fields(patient_data)
                     return self.rag_system.generate_discharge_summary(patient_text)
                 else:
                     return "❌ Please select a patient first to generate a discharge summary."
             
+            # Add patient context if available (truncated for speed)
             context = ""
             if patient_data:
                 # Truncate context to avoid long prompts
@@ -1153,7 +734,7 @@ class AutoGenMedicalAgent:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": f"{message}{context}"}
                     ],
-                    model="llama-3.1-8b-instant",
+                    model=config.GROQ_MODEL_ID,
                     temperature=0.6,
                     max_tokens=250,
                 )
@@ -1161,9 +742,9 @@ class AutoGenMedicalAgent:
             else:
                 # Local Fallback
                 response = self.rag_system.http.post(
-                    "http://localhost:11434/api/chat",
+                    config.OLLAMA_CHAT_ENDPOINT,
                     json={
-                        "model": "llama3",
+                        "model": config.OLLAMA_MODEL,
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": f"{message}{context}"}
@@ -1176,7 +757,7 @@ class AutoGenMedicalAgent:
                             "num_predict": 150
                         }
                     },
-                    timeout=20
+                    timeout=20  # Add timeout for faster failure
                 )
                 
                 if response.ok:
@@ -1209,20 +790,16 @@ def main():
     
     # Check FastAPI availability
     use_fastapi = st.session_state.api_client.health_check()
-    
-    # Force fallback if on Cloud (API won't be running)
-    # We assume cloud if GROQ_API_KEY is present in secrets
-    is_cloud_env = "GROQ_API_KEY" in st.secrets
-    
-    if use_fastapi and not is_cloud_env:
+    if use_fastapi:
         st.session_state.use_fastapi = True
         # Initialize with FastAPI client
         if 'rag_system' not in st.session_state:
+            # Still need RAG system for some operations (formatting, PDF generation)
             try:
                 st.session_state.rag_system = MedicalRAGSystem()
             except Exception as e:
                 st.warning(f"⚠️ Could not initialize full RAG system: {str(e)}. Some features may be limited.")
-        
+        # Always initialize autogen_agent if not present
         if 'autogen_agent' not in st.session_state:
             try:
                 st.session_state.autogen_agent = AutoGenMedicalAgent(
@@ -1233,26 +810,18 @@ def main():
                 st.error(f"❌ Failed to initialize AI agent: {str(e)}")
     else:
         st.session_state.use_fastapi = False
-        # Initialize RAG system as fallback (Cloud mode will land here)
+        # Initialize RAG system as fallback
         if 'rag_system' not in st.session_state:
-            with st.spinner("Initializing Medical RAG System..."):
+            with st.spinner("Initializing Medical RAG System (FastAPI unavailable, using fallback)..."):
                 try:
                     st.session_state.rag_system = MedicalRAGSystem()
                     st.session_state.autogen_agent = AutoGenMedicalAgent(st.session_state.rag_system, None)
-                    
-                    # Only show warning if NOT in cloud mode (since cloud expects fallback)
-                    if not is_cloud_env:
-                        st.warning("""
-                        ⚠️ **FastAPI backend not available. Using fallback mode.**
-                        Run `python start_api.py` locally for better performance.
-                        """)
-                    else:
-                        st.success("✅ Cloud Mode Active: Using Groq API + Local Fallback Logic")
-                        
+                    # NOTE: Removed the warning about FastAPI for production, 
+                    # as production is designed to use this fallback path.
                 except Exception as e:
                     st.error(f"❌ Failed to initialize system: {str(e)}")
                     st.stop()
-                    
+        # Ensure autogen_agent is initialized even in fallback mode
         if 'autogen_agent' not in st.session_state:
             try:
                 st.session_state.autogen_agent = AutoGenMedicalAgent(
@@ -1273,6 +842,7 @@ def main():
         template_file = st.file_uploader("Upload PDF template (optional)", type=["pdf"], accept_multiple_files=False)
         if template_file is not None:
             st.session_state["template_pdf_bytes"] = template_file.read()
+            # Extract outline from template (module-level helper to avoid class ordering issues)
             outline = extract_template_outline(st.session_state["template_pdf_bytes"])
             if outline:
                 st.session_state["template_outline"] = outline
@@ -1308,10 +878,10 @@ def main():
         """, unsafe_allow_html=True)
     
     with col_status2:
-        mode_text = "Cloud API" if st.session_state.rag_system.use_cloud_api else "Local Mode"
+        mode = "Cloud (Groq)" if st.session_state.rag_system.use_cloud_api else "Local"
         st.markdown(f"""
         <div class="metric-card">
-            <h4>⚡ {mode_text}</h4>
+            <h4>⚡ {mode}</h4>
             <p>Optimized responses</p>
         </div>
         """, unsafe_allow_html=True)
@@ -1333,6 +903,8 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
+    # RAG system is already initialized above
+    
     # Sidebar for patient search
     with st.sidebar:
         st.header("🔍 Patient Search")
@@ -1345,7 +917,7 @@ def main():
             if search_button and unit_no:
                 with st.spinner("Searching for patient..."):
                     try:
-                        # Use FastAPI if available AND not in cloud mode
+                        # Use FastAPI if available
                         if st.session_state.get('use_fastapi', False):
                             patient = st.session_state.api_client.get_patient(unit_no)
                         else:
@@ -1467,6 +1039,20 @@ def main():
                     # Get AI response with progress indicator
                     with st.spinner("🤖 AI is thinking..."):
                         try:
+                            # Check if autogen_agent is initialized
+                            if 'autogen_agent' not in st.session_state or st.session_state.autogen_agent is None:
+                                # Try to initialize it
+                                if st.session_state.get('use_fastapi', False):
+                                    st.session_state.autogen_agent = AutoGenMedicalAgent(
+                                        st.session_state.rag_system if 'rag_system' in st.session_state else None,
+                                        st.session_state.api_client
+                                    )
+                                else:
+                                    if 'rag_system' not in st.session_state:
+                                        st.error("❌ RAG system not initialized. Please refresh the page.")
+                                        st.stop()
+                                    st.session_state.autogen_agent = AutoGenMedicalAgent(st.session_state.rag_system, None)
+                            
                             start_time = time.time()
                             ai_response = st.session_state.autogen_agent.chat_with_doctor(
                                 user_message.strip(), 
@@ -1518,12 +1104,12 @@ def main():
                         progress_bar.progress(40)
                         start_time = time.time()
                         
-                        # Use FastAPI if available AND NOT Cloud
+                        # Use FastAPI if available
                         if st.session_state.get('use_fastapi', False):
                             template_outline = st.session_state.get("template_outline")
                             summary = st.session_state.api_client.generate_summary(patient_text, template_outline)
                         else:
-                            # Fallback / Cloud logic
+                            # If a template outline exists, follow it strictly
                             if "template_outline" in st.session_state and st.session_state.template_outline:
                                 summary = st.session_state.rag_system.generate_discharge_summary_with_template(patient_text, st.session_state.template_outline)
                             else:
@@ -1534,8 +1120,9 @@ def main():
                         status_text.text("📄 Preparing document...")
                         
                         st.session_state.discharge_summary = summary
-                        # Build PDF
+                        # Build PDF (with template if provided)
                         template_bytes = st.session_state.get("template_pdf_bytes", None)
+                        # For template mode, generate a clean PDF using the template's page size but avoid overlaying duplicate headings
                         pdf_bytes = st.session_state.rag_system.generate_pdf_from_text(summary, template_bytes=None if st.session_state.get("template_outline") else template_bytes)
                         st.session_state.discharge_summary_pdf = pdf_bytes
                         
@@ -1552,7 +1139,7 @@ def main():
                     with st.spinner("🔍 Searching for similar cases..."):
                         try:
                             patient_text = st.session_state.rag_system.format_patient_fields(st.session_state.current_patient)
-                            # Use FastAPI if available AND NOT Cloud
+                            # Use FastAPI if available
                             if st.session_state.get('use_fastapi', False):
                                 similar_cases = st.session_state.api_client.search_similar(patient_text)
                             else:
@@ -1703,6 +1290,8 @@ This patient is ready for discharge summary generation."""
                     st.write("**Summary Preview:**")
                     summary_preview = case['metadata'].get('summary', 'No summary available')[:200] + "..."
                     st.write(summary_preview)
+    
+    # Footer removed - status is now in header
 
 if __name__ == "__main__":
     main()
