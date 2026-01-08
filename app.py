@@ -784,53 +784,44 @@ class AutoGenMedicalAgent:
             return f"❌ Error in fallback chat: {str(e)}"
 
 def main():
-    # Initialize FastAPI client
+    st.set_page_config(
+        page_title="Medical Discharge Summary Assistant",
+        page_icon="🏥",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+
+    if not AUTOGEN_AVAILABLE:
+        st.warning("⚠️ AutoGen not available. Some features may be limited.")
+
+    # Initialize session state
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
+    if 'current_patient' not in st.session_state:
+        st.session_state.current_patient = None
+    if 'discharge_summary' not in st.session_state:
+        st.session_state.discharge_summary = None
+    if 'autogen_agent' not in st.session_state:
+        st.session_state.autogen_agent = None
+    
+    # Initialize FastAPI client (needed for fallback logic)
     if 'api_client' not in st.session_state:
         st.session_state.api_client = FastAPIClient()
-    
-    # Check FastAPI availability
-    use_fastapi = st.session_state.api_client.health_check()
-    if use_fastapi:
-        st.session_state.use_fastapi = True
-        # Initialize with FastAPI client
-        if 'rag_system' not in st.session_state:
-            # Still need RAG system for some operations (formatting, PDF generation)
+
+    # --- CRITICAL FIX: Initialize RAG system *before* checking its attributes ---
+    if 'rag_system' not in st.session_state:
+        with st.spinner("Initializing Medical RAG System..."):
             try:
                 st.session_state.rag_system = MedicalRAGSystem()
+                # Also initialize agent here to ensure dependencies are met
+                st.session_state.autogen_agent = AutoGenMedicalAgent(st.session_state.rag_system, st.session_state.api_client)
+                st.success("✅ System initialized successfully!")
             except Exception as e:
-                st.warning(f"⚠️ Could not initialize full RAG system: {str(e)}. Some features may be limited.")
-        # Always initialize autogen_agent if not present
-        if 'autogen_agent' not in st.session_state:
-            try:
-                st.session_state.autogen_agent = AutoGenMedicalAgent(
-                    st.session_state.rag_system if 'rag_system' in st.session_state else None,
-                    st.session_state.api_client
-                )
-            except Exception as e:
-                st.error(f"❌ Failed to initialize AI agent: {str(e)}")
-    else:
-        st.session_state.use_fastapi = False
-        # Initialize RAG system as fallback
-        if 'rag_system' not in st.session_state:
-            with st.spinner("Initializing Medical RAG System (FastAPI unavailable, using fallback)..."):
-                try:
-                    st.session_state.rag_system = MedicalRAGSystem()
-                    st.session_state.autogen_agent = AutoGenMedicalAgent(st.session_state.rag_system, None)
-                    # NOTE: Removed the warning about FastAPI for production, 
-                    # as production is designed to use this fallback path.
-                except Exception as e:
-                    st.error(f"❌ Failed to initialize system: {str(e)}")
-                    st.stop()
-        # Ensure autogen_agent is initialized even in fallback mode
-        if 'autogen_agent' not in st.session_state:
-            try:
-                st.session_state.autogen_agent = AutoGenMedicalAgent(
-                    st.session_state.rag_system if 'rag_system' in st.session_state else None,
-                    None
-                )
-            except Exception as e:
-                st.error(f"❌ Failed to initialize AI agent: {str(e)}")
+                st.error(f"❌ Failed to initialize system: {str(e)}")
+                st.stop()
 
+    # --- Now safe to access st.session_state.rag_system ---
+    
     # Sidebar preferences and CSS
     with st.sidebar:
         st.header("⚙️ Preferences")
@@ -842,7 +833,6 @@ def main():
         template_file = st.file_uploader("Upload PDF template (optional)", type=["pdf"], accept_multiple_files=False)
         if template_file is not None:
             st.session_state["template_pdf_bytes"] = template_file.read()
-            # Extract outline from template (module-level helper to avoid class ordering issues)
             outline = extract_template_outline(st.session_state["template_pdf_bytes"])
             if outline:
                 st.session_state["template_outline"] = outline
@@ -878,6 +868,7 @@ def main():
         """, unsafe_allow_html=True)
     
     with col_status2:
+        # Safe access now guaranteed
         mode = "Cloud (Groq)" if st.session_state.rag_system.use_cloud_api else "Local"
         st.markdown(f"""
         <div class="metric-card">
@@ -903,13 +894,10 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # RAG system is already initialized above
-    
     # Sidebar for patient search
     with st.sidebar:
         st.header("🔍 Patient Search")
         
-        # Patient search form
         with st.form("patient_search"):
             unit_no = st.text_input("Unit Number", placeholder="Enter patient unit number")
             search_button = st.form_submit_button("🔍 Search Patient")
@@ -917,11 +905,8 @@ def main():
             if search_button and unit_no:
                 with st.spinner("Searching for patient..."):
                     try:
-                        # Use FastAPI if available
-                        if st.session_state.get('use_fastapi', False):
-                            patient = st.session_state.api_client.get_patient(unit_no)
-                        else:
-                            patient = st.session_state.rag_system.get_patient_by_unit_no(unit_no)
+                        # Direct call since we standardized on RAGSystem handling the backend logic
+                        patient = st.session_state.rag_system.get_patient_by_unit_no(unit_no)
                         if patient:
                             st.session_state.current_patient = patient
                             st.markdown(f"""
@@ -1039,20 +1024,6 @@ def main():
                     # Get AI response with progress indicator
                     with st.spinner("🤖 AI is thinking..."):
                         try:
-                            # Check if autogen_agent is initialized
-                            if 'autogen_agent' not in st.session_state or st.session_state.autogen_agent is None:
-                                # Try to initialize it
-                                if st.session_state.get('use_fastapi', False):
-                                    st.session_state.autogen_agent = AutoGenMedicalAgent(
-                                        st.session_state.rag_system if 'rag_system' in st.session_state else None,
-                                        st.session_state.api_client
-                                    )
-                                else:
-                                    if 'rag_system' not in st.session_state:
-                                        st.error("❌ RAG system not initialized. Please refresh the page.")
-                                        st.stop()
-                                    st.session_state.autogen_agent = AutoGenMedicalAgent(st.session_state.rag_system, None)
-                            
                             start_time = time.time()
                             ai_response = st.session_state.autogen_agent.chat_with_doctor(
                                 user_message.strip(), 
@@ -1104,16 +1075,11 @@ def main():
                         progress_bar.progress(40)
                         start_time = time.time()
                         
-                        # Use FastAPI if available
-                        if st.session_state.get('use_fastapi', False):
-                            template_outline = st.session_state.get("template_outline")
-                            summary = st.session_state.api_client.generate_summary(patient_text, template_outline)
+                        # Use RAG system directly
+                        if "template_outline" in st.session_state and st.session_state.template_outline:
+                            summary = st.session_state.rag_system.generate_discharge_summary_with_template(patient_text, st.session_state.template_outline)
                         else:
-                            # If a template outline exists, follow it strictly
-                            if "template_outline" in st.session_state and st.session_state.template_outline:
-                                summary = st.session_state.rag_system.generate_discharge_summary_with_template(patient_text, st.session_state.template_outline)
-                            else:
-                                summary = st.session_state.rag_system.generate_discharge_summary(patient_text)
+                            summary = st.session_state.rag_system.generate_discharge_summary(patient_text)
                         
                         elapsed = time.time() - start_time
                         progress_bar.progress(80)
@@ -1139,11 +1105,7 @@ def main():
                     with st.spinner("🔍 Searching for similar cases..."):
                         try:
                             patient_text = st.session_state.rag_system.format_patient_fields(st.session_state.current_patient)
-                            # Use FastAPI if available
-                            if st.session_state.get('use_fastapi', False):
-                                similar_cases = st.session_state.api_client.search_similar(patient_text)
-                            else:
-                                similar_cases = st.session_state.rag_system.search_similar_cases(patient_text)
+                            similar_cases = st.session_state.rag_system.search_similar_cases(patient_text)
                             st.session_state.similar_cases = similar_cases
                             st.success(f"✅ Found {len(similar_cases)} similar cases!")
                         except Exception as e:
