@@ -8,8 +8,11 @@ import os
 from pymongo import MongoClient
 from bson import ObjectId
 from typing import Dict, List, Optional
+from dotenv import load_dotenv
 import math
-from snowflake.snowpark.context import get_active_session
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Try to import transformers, but make it optional
 try:
@@ -282,25 +285,6 @@ def _connect_chroma(path: str):
     client = chromadb.PersistentClient(path=path)
     collection = client.get_or_create_collection("patient_embeddings")
     return client, collection
-
-def get_chroma_path_from_stage() -> str:
-    """
-    Snowflake-compatible loader for ChromaDB.
-    Downloads vector DB from Snowflake stage into /tmp.
-    """
-    session = get_active_session()
-    local_path = "/tmp/chroma"
-
-    if not os.path.exists(local_path):
-        os.makedirs(local_path, exist_ok=True)
-        session.file.get(
-            "@medical_vector_stage",
-            local_path,
-            parallel=4
-        )
-
-    return local_path
-
 
 # Page configuration
 st.set_page_config(
@@ -1389,10 +1373,10 @@ if 'selected_similar_patient' not in st.session_state:
 
 class MedicalRAGSystem:
     def __init__(self):
-        self.mongo_uri = st.secrets["MONGO_URI"]
-        self.chroma_path = get_chroma_path_from_stage()
+        self.mongo_uri = "mongodb+srv://ishaanroopesh0102:6eShFuC0pNnFFNGm@cluster0.biujjg4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+        self.chroma_path = "vector_db/chroma"
         # Groq API Configuration
-        self.groq_api_key = st.secrets["GROQ_API_KEY"]
+        self.groq_api_key = os.getenv("GROQ_API_KEY", "")
         self.groq_base_url = "https://api.groq.com/openai/v1"
         self.groq_model = "meta-llama/llama-4-maverick-17b-128e-instruct"
         self.num_results = 3
